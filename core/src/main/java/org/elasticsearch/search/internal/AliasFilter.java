@@ -35,6 +35,8 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Objects;
 
+import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQueryBuilder;
+
 /**
  * Represents a {@link QueryBuilder} and a list of alias names that filters the builder is composed of.
  */
@@ -44,6 +46,8 @@ public final class AliasFilter implements Writeable {
     private final QueryBuilder filter;
     private final boolean reparseAliases;
 
+    public static final AliasFilter EMPTY = new AliasFilter(null, Strings.EMPTY_ARRAY);
+
     public AliasFilter(QueryBuilder filter, String... aliases) {
         this.aliases = aliases == null ? Strings.EMPTY_ARRAY : aliases;
         this.filter = filter;
@@ -52,7 +56,7 @@ public final class AliasFilter implements Writeable {
 
     public AliasFilter(StreamInput input) throws IOException {
         aliases = input.readStringArray();
-        if (input.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+        if (input.getVersion().onOrAfter(Version.V_5_1_1)) {
             filter = input.readOptionalNamedWriteable(QueryBuilder.class);
             reparseAliases = false;
         } else {
@@ -69,7 +73,7 @@ public final class AliasFilter implements Writeable {
              * of dependencies we pass in a function that can perform the parsing. */
             CheckedFunction<byte[], QueryBuilder, IOException> filterParser = bytes -> {
                 try (XContentParser parser = XContentFactory.xContent(bytes).createParser(context.getXContentRegistry(), bytes)) {
-                    return context.newParseContext(parser).parseInnerQueryBuilder();
+                    return parseInnerQueryBuilder(parser);
                 }
             };
             return ShardSearchRequest.parseAliasFilter(filterParser, indexMetaData, aliases);
@@ -88,7 +92,7 @@ public final class AliasFilter implements Writeable {
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeStringArray(aliases);
-        if (out.getVersion().onOrAfter(Version.V_5_1_1_UNRELEASED)) {
+        if (out.getVersion().onOrAfter(Version.V_5_1_1)) {
             out.writeOptionalNamedWriteable(filter);
         }
     }

@@ -20,12 +20,28 @@
 package org.elasticsearch.discovery.ec2;
 
 import com.amazonaws.util.json.Jackson;
+import org.apache.logging.log4j.Logger;
+import org.apache.lucene.util.IOUtils;
+import org.apache.lucene.util.SetOnce;
+import org.elasticsearch.SpecialPermission;
+import org.elasticsearch.common.SuppressForbidden;
+import org.elasticsearch.common.logging.DeprecationLogger;
+import org.elasticsearch.common.logging.Loggers;
+import org.elasticsearch.common.network.NetworkService;
+import org.elasticsearch.common.settings.Setting;
+import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.discovery.zen.UnicastHostsProvider;
+import org.elasticsearch.node.Node;
+import org.elasticsearch.plugins.DiscoveryPlugin;
+import org.elasticsearch.plugins.Plugin;
+import org.elasticsearch.transport.TransportService;
+
+import java.io.UncheckedIOException;
 import java.io.BufferedReader;
-import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.UncheckedIOException;
+import java.io.Closeable;
 import java.net.URL;
 import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
@@ -36,28 +52,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
-
-import org.apache.logging.log4j.Logger;
-import org.apache.lucene.util.IOUtils;
-import org.apache.lucene.util.SetOnce;
-import org.elasticsearch.SpecialPermission;
-import org.elasticsearch.cluster.service.ClusterService;
-import org.elasticsearch.common.SuppressForbidden;
-import org.elasticsearch.common.io.stream.NamedWriteableRegistry;
-import org.elasticsearch.common.logging.DeprecationLogger;
-import org.elasticsearch.common.logging.Loggers;
-import org.elasticsearch.common.network.NetworkService;
-import org.elasticsearch.common.settings.Setting;
-import org.elasticsearch.common.settings.Settings;
-import org.elasticsearch.discovery.Discovery;
-import org.elasticsearch.discovery.DiscoveryModule;
-import org.elasticsearch.discovery.zen.UnicastHostsProvider;
-import org.elasticsearch.discovery.zen.ZenDiscovery;
-import org.elasticsearch.node.Node;
-import org.elasticsearch.plugins.DiscoveryPlugin;
-import org.elasticsearch.plugins.Plugin;
-import org.elasticsearch.threadpool.ThreadPool;
-import org.elasticsearch.transport.TransportService;
 
 public class Ec2DiscoveryPlugin extends Plugin implements DiscoveryPlugin, Closeable {
 
@@ -92,14 +86,7 @@ public class Ec2DiscoveryPlugin extends Plugin implements DiscoveryPlugin, Close
         this.settings = settings;
     }
 
-    @Override
-    public Map<String, Supplier<Discovery>> getDiscoveryTypes(ThreadPool threadPool, TransportService transportService,
-                                                              NamedWriteableRegistry namedWriteableRegistry,
-                                                              ClusterService clusterService, UnicastHostsProvider hostsProvider) {
-        // this is for backcompat with pre 5.1, where users would set discovery.type to use ec2 hosts provider
-        return Collections.singletonMap(EC2, () ->
-            new ZenDiscovery(settings, threadPool, transportService, namedWriteableRegistry, clusterService, hostsProvider));
-    }
+
 
     @Override
     public NetworkService.CustomNameResolver getCustomNameResolver(Settings settings) {

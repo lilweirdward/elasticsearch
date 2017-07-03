@@ -20,6 +20,7 @@
 package org.elasticsearch.index.query.functionscore;
 
 import com.fasterxml.jackson.core.JsonParseException;
+
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
@@ -40,7 +41,6 @@ import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.AbstractQueryBuilder;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.index.query.QueryParseContext;
 import org.elasticsearch.index.query.RandomQueryBuilder;
 import org.elasticsearch.index.query.TermQueryBuilder;
 import org.elasticsearch.index.query.WrapperQueryBuilder;
@@ -83,6 +83,9 @@ import static org.hamcrest.Matchers.nullValue;
 
 public class FunctionScoreQueryBuilderTests extends AbstractQueryTestCase<FunctionScoreQueryBuilder> {
 
+    private static final String[] SHUFFLE_PROTECTED_FIELDS = new String[] {Script.PARAMS_PARSE_FIELD.getPreferredName(),
+        ExponentialDecayFunctionBuilder.NAME, LinearDecayFunctionBuilder.NAME, GaussDecayFunctionBuilder.NAME};
+
     @Override
     protected Collection<Class<? extends Plugin>> getPlugins() {
         return Collections.singleton(TestPlugin.class);
@@ -104,6 +107,12 @@ public class FunctionScoreQueryBuilderTests extends AbstractQueryTestCase<Functi
             functionScoreQueryBuilder.setMinScore(randomFloat());
         }
         return functionScoreQueryBuilder;
+    }
+
+    @Override
+    protected String[] shuffleProtectedFields() {
+        // do not shuffle fields that may contain arbitrary content
+        return SHUFFLE_PROTECTED_FIELDS;
     }
 
     @Override
@@ -218,7 +227,7 @@ public class FunctionScoreQueryBuilderTests extends AbstractQueryTestCase<Functi
             break;
         case DATE_FIELD_NAME:
             origin = new DateTime(System.currentTimeMillis() - randomIntBetween(0, 1000000), DateTimeZone.UTC).toString();
-            scale = randomPositiveTimeValue();
+            scale = randomTimeValue(1, 1000, new String[]{"d", "h", "ms", "s", "m"});
             offset = randomPositiveTimeValue();
             break;
         default:
@@ -787,9 +796,9 @@ public class FunctionScoreQueryBuilderTests extends AbstractQueryTestCase<Functi
             return NAME;
         }
 
-        public static RandomScoreFunctionBuilder fromXContent(QueryParseContext parseContext)
+        public static RandomScoreFunctionBuilder fromXContent(XContentParser parser)
                 throws IOException, ParsingException {
-            RandomScoreFunctionBuilder builder = RandomScoreFunctionBuilder.fromXContent(parseContext);
+            RandomScoreFunctionBuilder builder = RandomScoreFunctionBuilder.fromXContent(parser);
             RandomScoreFunctionBuilderWithFixedSeed replacement = new RandomScoreFunctionBuilderWithFixedSeed();
             if (builder.getSeed() != null) {
                 replacement.seed(builder.getSeed());

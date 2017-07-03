@@ -270,8 +270,9 @@ public class TransportWriteActionTests extends ESTestCase {
         // check that at unknown node fails
         PlainActionFuture<ReplicaResponse> listener = new PlainActionFuture<>();
         proxy.performOn(
-            TestShardRouting.newShardRouting(shardId, "NOT THERE", false, randomFrom(ShardRoutingState.values())),
-            new TestRequest(), listener);
+                TestShardRouting.newShardRouting(shardId, "NOT THERE", false, randomFrom(ShardRoutingState.values())),
+                new TestRequest(),
+                randomNonNegativeLong(), listener);
         assertTrue(listener.isDone());
         assertListenerThrows("non existent node should throw a NoNodeAvailableException", listener, NoNodeAvailableException.class);
 
@@ -279,14 +280,13 @@ public class TransportWriteActionTests extends ESTestCase {
         final ShardRouting replica = randomFrom(shardRoutings.replicaShards().stream()
             .filter(ShardRouting::assignedToNode).collect(Collectors.toList()));
         listener = new PlainActionFuture<>();
-        proxy.performOn(replica, new TestRequest(), listener);
+        proxy.performOn(replica, new TestRequest(), randomNonNegativeLong(), listener);
         assertFalse(listener.isDone());
 
         CapturingTransport.CapturedRequest[] captures = transport.getCapturedRequestsAndClear();
         assertThat(captures, arrayWithSize(1));
         if (randomBoolean()) {
-            final TransportReplicationAction.ReplicaResponse response =
-                new TransportReplicationAction.ReplicaResponse(randomAlphaOfLength(10), randomLong());
+            final TransportReplicationAction.ReplicaResponse response = new TransportReplicationAction.ReplicaResponse(randomLong());
             transport.handleResponse(captures[0].requestId, response);
             assertTrue(listener.isDone());
             assertThat(listener.get(), equalTo(response));
@@ -443,7 +443,7 @@ public class TransportWriteActionTests extends ESTestCase {
             count.incrementAndGet();
             callback.onResponse(count::decrementAndGet);
             return null;
-        }).when(indexShard).acquirePrimaryOperationLock(any(ActionListener.class), anyString());
+        }).when(indexShard).acquirePrimaryOperationPermit(any(ActionListener.class), anyString());
         doAnswer(invocation -> {
             long term = (Long)invocation.getArguments()[0];
             ActionListener<Releasable> callback = (ActionListener<Releasable>) invocation.getArguments()[1];
@@ -455,7 +455,7 @@ public class TransportWriteActionTests extends ESTestCase {
             count.incrementAndGet();
             callback.onResponse(count::decrementAndGet);
             return null;
-        }).when(indexShard).acquireReplicaOperationLock(anyLong(), any(ActionListener.class), anyString());
+        }).when(indexShard).acquireReplicaOperationPermit(anyLong(), anyLong(), any(ActionListener.class), anyString());
         when(indexShard.routingEntry()).thenAnswer(invocationOnMock -> {
             final ClusterState state = clusterService.state();
             final RoutingNode node = state.getRoutingNodes().node(state.nodes().getLocalNodeId());

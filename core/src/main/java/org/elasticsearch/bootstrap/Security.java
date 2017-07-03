@@ -27,7 +27,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.env.Environment;
 import org.elasticsearch.http.HttpTransportSettings;
 import org.elasticsearch.plugins.PluginInfo;
-import org.elasticsearch.transport.TransportSettings;
+import org.elasticsearch.transport.TcpTransport;
 
 import java.io.FilePermission;
 import java.io.IOException;
@@ -46,6 +46,7 @@ import java.security.Policy;
 import java.security.URIParameter;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
@@ -255,35 +256,28 @@ final class Security {
         addPath(policy, Environment.PATH_HOME_SETTING.getKey(), environment.libFile(), "read,readlink");
         addPath(policy, Environment.PATH_HOME_SETTING.getKey(), environment.modulesFile(), "read,readlink");
         addPath(policy, Environment.PATH_HOME_SETTING.getKey(), environment.pluginsFile(), "read,readlink");
-        addPath(policy, Environment.PATH_CONF_SETTING.getKey(), environment.configFile(), "read,readlink");
-        addPath(policy, Environment.PATH_SCRIPTS_SETTING.getKey(), environment.scriptsFile(), "read,readlink");
+        addPath(policy, "path.conf'", environment.configFile(), "read,readlink");
         // read-write dirs
         addPath(policy, "java.io.tmpdir", environment.tmpFile(), "read,readlink,write,delete");
         addPath(policy, Environment.PATH_LOGS_SETTING.getKey(), environment.logsFile(), "read,readlink,write,delete");
         if (environment.sharedDataFile() != null) {
             addPath(policy, Environment.PATH_SHARED_DATA_SETTING.getKey(), environment.sharedDataFile(), "read,readlink,write,delete");
         }
+        final Set<Path> dataFilesPaths = new HashSet<>();
         for (Path path : environment.dataFiles()) {
             addPath(policy, Environment.PATH_DATA_SETTING.getKey(), path, "read,readlink,write,delete");
-        }
-        /*
-         * If path.data and default.path.data are set, we need read access to the paths in default.path.data to check for the existence of
-         * index directories there that could have arisen from a bug in the handling of simultaneous configuration of path.data and
-         * default.path.data that was introduced in Elasticsearch 5.3.0.
-         *
-         * If path.data is not set then default.path.data would take precedence in setting the data paths for the environment and
-         * permissions would have been granted above.
-         *
-         * If path.data is not set and default.path.data is not set, then we would fallback to the default data directory under
-         * Elasticsearch home and again permissions would have been granted above.
-         *
-         * If path.data is set and default.path.data is not set, there is nothing to do here.
-         */
-        if (Environment.PATH_DATA_SETTING.exists(environment.settings())
-                && Environment.DEFAULT_PATH_DATA_SETTING.exists(environment.settings())) {
-            for (final String path : Environment.DEFAULT_PATH_DATA_SETTING.get(environment.settings())) {
-                // write permissions are not needed here, we are not going to be writing to any paths here
-                addPath(policy, Environment.DEFAULT_PATH_DATA_SETTING.getKey(), getPath(path), "read,readlink");
+            /*
+             * We have to do this after adding the path because a side effect of that is that the directory is created; the Path#toRealPath
+             * invocation will fail if the directory does not already exist. We use Path#toRealPath to follow symlinks and handle issues
+             * like unicode normalization or case-insensitivity on some filesystems (e.g., the case-insensitive variant of HFS+ on macOS).
+             */
+            try {
+                final Path realPath = path.toRealPath();
+                if (!dataFilesPaths.add(realPath)) {
+                    throw new IllegalStateException("path [" + realPath + "] is duplicated by [" + path + "]");
+                }
+            } catch (final IOException e) {
+                throw new IllegalStateException("unable to access [" + path + "]", e);
             }
         }
         for (Path path : environment.repoFiles()) {
@@ -293,11 +287,6 @@ final class Security {
             // we just need permission to remove the file if its elsewhere.
             policy.add(new FilePermission(environment.pidFile().toString(), "delete"));
         }
-    }
-
-    @SuppressForbidden(reason = "read path that is not configured in environment")
-    private static Path getPath(final String path) {
-        return PathUtils.get(path);
     }
 
     /**
@@ -335,8 +324,8 @@ final class Security {
         final Permissions policy,
         final Settings settings) {
         // transport is way over-engineered
-        final Map<String, Settings> profiles = new HashMap<>(TransportSettings.TRANSPORT_PROFILES_SETTING.get(settings).getAsGroups());
-        profiles.putIfAbsent(TransportSettings.DEFAULT_PROFILE, Settings.EMPTY);
+        final Map<String, Settings> profiles = new HashMap<>(TcpTransport.TRANSPORT_PROFILES_SETTING.get(settings).getAsGroups());
+        profiles.putIfAbsent(TcpTransport.DEFAULT_PROFILE, Settings.EMPTY);
 
         // loop through all profiles and add permissions for each one, if it's valid; otherwise Netty transports are lenient and ignores it
         for (final Map.Entry<String, Settings> entry : profiles.entrySet()) {
@@ -346,7 +335,7 @@ final class Security {
             // a profile is only valid if it's the default profile, or if it has an actual name and specifies a port
             // TODO: can this leniency be removed?
             final boolean valid =
-                TransportSettings.DEFAULT_PROFILE.equals(name) ||
+                TcpTransport.DEFAULT_PROFILE.equals(name) ||
                     (name != null && name.length() > 0 && profileSettings.get("port") != null);
             if (valid) {
                 final String transportRange = profileSettings.get("port");
@@ -366,7 +355,7 @@ final class Security {
      * @param settings        the {@link Settings} instance to read the transport settings from
      */
     private static void addSocketPermissionForTransport(final Permissions policy, final Settings settings) {
-        final String transportRange = TransportSettings.PORT.get(settings);
+        final String transportRange = TcpTransport.PORT.get(settings);
         addSocketPermissionForPortRange(policy, transportRange);
     }
 
@@ -393,11 +382,12 @@ final class Security {
     }
 
     /**
-     * Add access to path (and all files underneath it)
-     * @param policy current policy to add permissions to
+     * Add access to path (and all files underneath it); this also creates the directory if it does not exist.
+     *
+     * @param policy            current policy to add permissions to
      * @param configurationName the configuration name associated with the path (for error messages only)
-     * @param path the path itself
-     * @param permissions set of file permissions to grant to the path
+     * @param path              the path itself
+     * @param permissions       set of file permissions to grant to the path
      */
     static void addPath(Permissions policy, String configurationName, Path path, String permissions) {
         // paths may not exist yet, this also checks accessibility
@@ -411,27 +401,6 @@ final class Security {
         policy.add(new FilePermission(path.toString(), permissions));
         policy.add(new FilePermission(path.toString() + path.getFileSystem().getSeparator() + "-", permissions));
     }
-
-    /**
-     * Add access to a directory iff it exists already
-     * @param policy current policy to add permissions to
-     * @param configurationName the configuration name associated with the path (for error messages only)
-     * @param path the path itself
-     * @param permissions set of file permissions to grant to the path
-     */
-    static void addPathIfExists(Permissions policy, String configurationName, Path path, String permissions) {
-        if (Files.isDirectory(path)) {
-            // add each path twice: once for itself, again for files underneath it
-            policy.add(new FilePermission(path.toString(), permissions));
-            policy.add(new FilePermission(path.toString() + path.getFileSystem().getSeparator() + "-", permissions));
-            try {
-                path.getFileSystem().provider().checkAccess(path.toRealPath(), AccessMode.READ);
-            } catch (IOException e) {
-                throw new IllegalStateException("Unable to access '" + configurationName + "' (" + path + ")", e);
-            }
-        }
-    }
-
 
     /**
      * Ensures configured directory {@code path} exists.

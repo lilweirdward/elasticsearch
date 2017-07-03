@@ -277,7 +277,7 @@ fi
 }
 
 @test "[$GROUP] install repository-hdfs plugin" {
-    install_and_check_plugin repository hdfs hadoop-client-*.jar hadoop-common-*.jar hadoop-annotations-*.jar hadoop-auth-*.jar hadoop-hdfs-*.jar htrace-core-*.jar guava-*.jar protobuf-java-*.jar commons-logging-*.jar commons-cli-*.jar commons-collections-*.jar commons-configuration-*.jar commons-io-*.jar commons-lang-*.jar servlet-api-*.jar slf4j-api-*.jar
+    install_and_check_plugin repository hdfs hadoop-client-*.jar hadoop-common-*.jar hadoop-annotations-*.jar hadoop-auth-*.jar hadoop-hdfs-client-*.jar htrace-core4-*.jar guava-*.jar protobuf-java-*.jar commons-logging-*.jar commons-cli-*.jar commons-collections-*.jar commons-configuration-*.jar commons-io-*.jar commons-lang-*.jar servlet-api-*.jar slf4j-api-*.jar
 }
 
 @test "[$GROUP] install size mapper plugin" {
@@ -474,4 +474,8 @@ fi
 
     # restore ES_JAVA_OPTS
     export ES_JAVA_OPTS=$es_java_opts
+}
+
+@test "[$GROUP] test umask" {
+    install_jvm_example $(readlink -m jvm-example-*.zip) 0077
 }

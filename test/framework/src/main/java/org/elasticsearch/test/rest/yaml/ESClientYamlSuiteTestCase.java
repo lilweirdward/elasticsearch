@@ -140,24 +140,7 @@ public abstract class ESClientYamlSuiteTestCase extends ESRestTestCase {
         // admin context must be available for @After always, regardless of whether the test was blacklisted
         adminExecutionContext.clear();
 
-        //skip test if it matches one of the blacklist globs
-        for (BlacklistedPathPatternMatcher blacklistedPathMatcher : blacklistPathMatchers) {
-            String testPath = testCandidate.getSuitePath() + "/" + testCandidate.getTestSection().getName();
-            assumeFalse("[" + testCandidate.getTestPath() + "] skipped, reason: blacklisted", blacklistedPathMatcher
-                    .isSuffixMatch(testPath));
-        }
-
         restTestExecutionContext.clear();
-
-        //skip test if the whole suite (yaml file) is disabled
-        assumeFalse(testCandidate.getSetupSection().getSkipSection().getSkipMessage(testCandidate.getSuitePath()),
-                testCandidate.getSetupSection().getSkipSection().skip(restTestExecutionContext.esVersion()));
-        //skip test if the whole suite (yaml file) is disabled
-        assumeFalse(testCandidate.getTeardownSection().getSkipSection().getSkipMessage(testCandidate.getSuitePath()),
-                testCandidate.getTeardownSection().getSkipSection().skip(restTestExecutionContext.esVersion()));
-        //skip test if test section is disabled
-        assumeFalse(testCandidate.getTestSection().getSkipSection().getSkipMessage(testCandidate.getTestPath()),
-                testCandidate.getTestSection().getSkipSection().skip(restTestExecutionContext.esVersion()));
     }
 
     @Override
@@ -171,7 +154,7 @@ public abstract class ESClientYamlSuiteTestCase extends ESRestTestCase {
     public static Iterable<Object[]> createParameters() throws Exception {
         String[] paths = resolvePathsProperty(REST_TESTS_SUITE, ""); // default to all tests under the test root
         List<Object[]> tests = new ArrayList<>();
-        Map<String, Set<Path>> yamlSuites = loadYamlSuites(paths);
+        Map<String, Set<Path>> yamlSuites = loadSuites(paths);
         // yaml suites are grouped by directory (effectively by api)
         for (String api : yamlSuites.keySet()) {
             List<Path> yamlFiles = new ArrayList<>(yamlSuites.get(api));
@@ -191,28 +174,30 @@ public abstract class ESClientYamlSuiteTestCase extends ESRestTestCase {
 
     /** Find all yaml suites that match the given list of paths from the root test path. */
     // pkg private for tests
-    static Map<String, Set<Path>> loadYamlSuites(String... paths) throws Exception {
+    static Map<String, Set<Path>> loadSuites(String... paths) throws Exception {
         Map<String, Set<Path>> files = new HashMap<>();
         Path root = PathUtils.get(ESClientYamlSuiteTestCase.class.getResource(TESTS_PATH).toURI());
         for (String strPath : paths) {
             Path path = root.resolve(strPath);
             if (Files.isDirectory(path)) {
                 Files.walk(path).forEach(file -> {
-                    if (file.toString().endsWith(".yaml")) {
-                        addYamlSuite(root, file, files);
+                    if (file.toString().endsWith(".yml")) {
+                        addSuite(root, file, files);
+                    } else if (file.toString().endsWith(".yaml")) {
+                        throw new IllegalArgumentException("yaml files are no longer supported: " + file);
                     }
                 });
             } else {
-                path = root.resolve(strPath + ".yaml");
+                path = root.resolve(strPath + ".yml");
                 assert Files.exists(path);
-                addYamlSuite(root, path, files);
+                addSuite(root, path, files);
             }
         }
         return files;
     }
 
     /** Add a single suite file to the set of suites. */
-    private static void addYamlSuite(Path root, Path file, Map<String, Set<Path>> files) {
+    private static void addSuite(Path root, Path file, Map<String, Set<Path>> files) {
         String groupName = root.relativize(file.getParent()).toString();
         Set<Path> filesSet = files.get(groupName);
         if (filesSet == null) {
@@ -306,6 +291,23 @@ public abstract class ESClientYamlSuiteTestCase extends ESRestTestCase {
     }
 
     public void test() throws IOException {
+        //skip test if it matches one of the blacklist globs
+        for (BlacklistedPathPatternMatcher blacklistedPathMatcher : blacklistPathMatchers) {
+            String testPath = testCandidate.getSuitePath() + "/" + testCandidate.getTestSection().getName();
+            assumeFalse("[" + testCandidate.getTestPath() + "] skipped, reason: blacklisted", blacklistedPathMatcher
+                .isSuffixMatch(testPath));
+        }
+
+        //skip test if the whole suite (yaml file) is disabled
+        assumeFalse(testCandidate.getSetupSection().getSkipSection().getSkipMessage(testCandidate.getSuitePath()),
+            testCandidate.getSetupSection().getSkipSection().skip(restTestExecutionContext.esVersion()));
+        //skip test if the whole suite (yaml file) is disabled
+        assumeFalse(testCandidate.getTeardownSection().getSkipSection().getSkipMessage(testCandidate.getSuitePath()),
+            testCandidate.getTeardownSection().getSkipSection().skip(restTestExecutionContext.esVersion()));
+        //skip test if test section is disabled
+        assumeFalse(testCandidate.getTestSection().getSkipSection().getSkipMessage(testCandidate.getTestPath()),
+            testCandidate.getTestSection().getSkipSection().skip(restTestExecutionContext.esVersion()));
+
         //let's check that there is something to run, otherwise there might be a problem with the test section
         if (testCandidate.getTestSection().getExecutableSections().size() == 0) {
             throw new IllegalArgumentException("No executable sections loaded for [" + testCandidate.getTestPath() + "]");

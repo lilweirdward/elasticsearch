@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# This file contains some utilities to test the elasticsearch scripts,
-# the .deb/.rpm packages and the SysV/Systemd scripts.
+# This file contains some utilities to test the the .deb/.rpm
+# packages and the SysV/Systemd scripts.
 
 # WARNING: This testing file must be executed as root and can
 # dramatically change your system. It should only be executed
@@ -348,7 +348,7 @@ run_elasticsearch_service() {
             local CONF_DIR=""
             local ES_PATH_CONF=""
         else
-            local ES_PATH_CONF="-Epath.conf=$CONF_DIR"
+            local ES_PATH_CONF="--path.conf $CONF_DIR"
         fi
         # we must capture the exit code to compare so we don't want to start as background process in case we expect something other than 0
         local background=""
@@ -476,11 +476,6 @@ check_elasticsearch_version() {
     }
 }
 
-install_elasticsearch_test_scripts() {
-    install_script is_guide.painless
-    install_script is_guide.mustache
-}
-
 # Executes some basic Elasticsearch tests
 run_elasticsearch_tests() {
     # TODO this assertion is the same the one made when waiting for
@@ -502,24 +497,6 @@ run_elasticsearch_tests() {
     curl -s -XGET 'http://localhost:9200/_count?pretty' |
       grep \"count\"\ :\ 2
 
-    curl -s -H "Content-Type: application/json" -XPOST 'http://localhost:9200/library/book/_count?pretty' -d '{
-      "query": {
-        "script": {
-          "script": {
-            "file": "is_guide",
-            "lang": "painless",
-            "params": {
-              "min_num_pages": 100
-            }
-          }
-        }
-      }
-    }' | grep \"count\"\ :\ 2
-
-    curl -s -H "Content-Type: application/json" -XGET 'http://localhost:9200/library/book/_search/template?pretty' -d '{
-      "file": "is_guide"
-    }' | grep \"total\"\ :\ 1
-
     curl -s -XDELETE 'http://localhost:9200/_all'
 }
 
@@ -535,15 +512,6 @@ move_config() {
     assert_file_exist "$ESCONFIG/elasticsearch.yml"
     assert_file_exist "$ESCONFIG/jvm.options"
     assert_file_exist "$ESCONFIG/log4j2.properties"
-}
-
-# Copies a script into the Elasticsearch install.
-install_script() {
-    local name=$1
-    mkdir -p $ESSCRIPTS
-    local script="$BATS_TEST_DIRNAME/example/scripts/$name"
-    echo "Installing $script to $ESSCRIPTS"
-    cp $script $ESSCRIPTS
 }
 
 # permissions from the user umask with the executable bit set

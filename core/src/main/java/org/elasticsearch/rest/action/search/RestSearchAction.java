@@ -26,7 +26,6 @@ import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.index.query.QueryParseContext;
 import org.elasticsearch.rest.BaseRestHandler;
 import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
@@ -67,6 +66,11 @@ public class RestSearchAction extends BaseRestHandler {
     }
 
     @Override
+    public String getName() {
+        return "search_action";
+    }
+
+    @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
         SearchRequest searchRequest = new SearchRequest();
         request.withContentOrSourceParamParserOrNull(parser ->
@@ -89,8 +93,7 @@ public class RestSearchAction extends BaseRestHandler {
         }
         searchRequest.indices(Strings.splitStringByCommaToArray(request.param("index")));
         if (requestContentParser != null) {
-            QueryParseContext context = new QueryParseContext(requestContentParser);
-            searchRequest.source().parseXContent(context);
+            searchRequest.source().parseXContent(requestContentParser);
         }
 
         final int batchedReduceSize = request.paramAsInt("batched_reduce_size", searchRequest.getBatchedReduceSize());
@@ -190,6 +193,10 @@ public class RestSearchAction extends BaseRestHandler {
 
         if (request.hasParam("track_scores")) {
             searchSourceBuilder.trackScores(request.paramAsBoolean("track_scores", false));
+        }
+
+        if (request.hasParam("track_total_hits")) {
+            searchSourceBuilder.trackTotalHits(request.paramAsBoolean("track_total_hits", true));
         }
 
         String sSorts = request.param("sort");

@@ -25,6 +25,7 @@ import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.action.search.SearchPhaseExecutionException;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.SearchType;
+import org.elasticsearch.common.document.DocumentField;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentBuilder;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
@@ -36,9 +37,9 @@ import org.elasticsearch.script.MockScriptPlugin;
 import org.elasticsearch.script.Script;
 import org.elasticsearch.script.ScriptType;
 import org.elasticsearch.search.SearchHit;
-import org.elasticsearch.search.SearchHitField;
 import org.elasticsearch.search.SearchHits;
 import org.elasticsearch.search.aggregations.Aggregator.SubAggCollectionMode;
+import org.elasticsearch.search.aggregations.BucketOrder;
 import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.bucket.global.Global;
 import org.elasticsearch.search.aggregations.bucket.histogram.Histogram;
@@ -398,7 +399,7 @@ public class TopHitsIT extends ESIntegTestCase {
                 .executionHint(randomExecutionHint())
                 .collectMode(SubAggCollectionMode.BREADTH_FIRST)
                 .field(TERMS_AGGS_FIELD)
-                .order(Terms.Order.aggregation("max", false))
+                .order(BucketOrder.aggregation("max", false))
                 .subAggregation(max("max").field(SORT_FIELD))
                 .subAggregation(topHits("hits").size(3))
             ).get();
@@ -494,7 +495,7 @@ public class TopHitsIT extends ESIntegTestCase {
                 .addAggregation(terms("terms")
                                 .executionHint(randomExecutionHint())
                                 .field(TERMS_AGGS_FIELD)
-                                .order(Terms.Order.aggregation("max_sort", false))
+                                .order(BucketOrder.aggregation("max_sort", false))
                                 .subAggregation(
                                         topHits("hits").sort(SortBuilders.fieldSort(SORT_FIELD).order(SortOrder.DESC)).trackScores(true)
                                 )
@@ -519,9 +520,9 @@ public class TopHitsIT extends ESIntegTestCase {
             SearchHits hits = topHits.getHits();
             assertThat(hits.getTotalHits(), equalTo(10L));
             assertThat(hits.getHits().length, equalTo(3));
-            assertThat((Long) hits.getAt(0).getSortValues()[0], equalTo(higestSortValue));
-            assertThat((Long) hits.getAt(1).getSortValues()[0], equalTo(higestSortValue - 1));
-            assertThat((Long) hits.getAt(2).getSortValues()[0], equalTo(higestSortValue - 2));
+            assertThat(hits.getAt(0).getSortValues()[0], equalTo(higestSortValue));
+            assertThat(hits.getAt(1).getSortValues()[0], equalTo(higestSortValue - 1));
+            assertThat(hits.getAt(2).getSortValues()[0], equalTo(higestSortValue - 2));
             Max max = bucket.getAggregations().get("max_sort");
             assertThat(max.getValue(), equalTo(((Long) higestSortValue).doubleValue()));
             higestSortValue -= 10;
@@ -535,7 +536,7 @@ public class TopHitsIT extends ESIntegTestCase {
                 .setQuery(matchQuery("text", "term rare"))
                 .addAggregation(
                         terms("terms").executionHint(randomExecutionHint()).field("group")
-                                .order(Terms.Order.aggregation("max_score", false)).subAggregation(topHits("hits").size(1))
+                                .order(BucketOrder.aggregation("max_score", false)).subAggregation(topHits("hits").size(1))
                                 .subAggregation(max("max_score").field("value"))).get();
         assertSearchResponse(response);
 
@@ -544,7 +545,7 @@ public class TopHitsIT extends ESIntegTestCase {
         assertThat(terms.getName(), equalTo("terms"));
         assertThat(terms.getBuckets().size(), equalTo(3));
 
-        Iterator<Terms.Bucket> bucketIterator = terms.getBuckets().iterator();
+        Iterator<? extends Terms.Bucket> bucketIterator = terms.getBuckets().iterator();
         Terms.Bucket bucket = bucketIterator.next();
         assertThat(key(bucket), equalTo("b"));
         TopHits topHits = bucket.getAggregations().get("hits");
@@ -614,7 +615,7 @@ public class TopHitsIT extends ESIntegTestCase {
 
             assertThat(hit.getMatchedQueries()[0], equalTo("test"));
 
-            SearchHitField field = hit.field("field1");
+            DocumentField field = hit.field("field1");
             assertThat(field.getValue().toString(), equalTo("5"));
 
             assertThat(hit.getSourceAsMap().get("text").toString(), equalTo("some text to entertain"));
@@ -667,7 +668,7 @@ public class TopHitsIT extends ESIntegTestCase {
                                             topHits("hits")
                                                     .trackScores(trackScore)
                                                     .size(1)
-                                                    .sort("_uid", SortOrder.DESC)
+                                                    .sort("_index", SortOrder.DESC)
                                     )
                     )
                     .get();
@@ -851,7 +852,7 @@ public class TopHitsIT extends ESIntegTestCase {
     }
 
     public void testNestedFetchFeatures() {
-        String hlType = randomFrom("plain", "fvh", "postings");
+        String hlType = randomFrom("plain", "fvh", "unified");
         HighlightBuilder.Field hlField = new HighlightBuilder.Field("comments.message")
                 .highlightQuery(matchQuery("comments.message", "comment"))
                 .forceSource(randomBoolean()) // randomly from stored field or _source
@@ -892,7 +893,7 @@ public class TopHitsIT extends ESIntegTestCase {
 
         assertThat(searchHit.getMatchedQueries(), arrayContaining("test"));
 
-        SearchHitField field = searchHit.field("comments.user");
+        DocumentField field = searchHit.field("comments.user");
         assertThat(field.getValue().toString(), equalTo("a"));
 
         field = searchHit.field("script");
@@ -908,7 +909,6 @@ public class TopHitsIT extends ESIntegTestCase {
                         histogram("dates")
                                 .field("date")
                                 .interval(5)
-                                .order(Histogram.Order.aggregation("to-comments", true))
                                 .subAggregation(
                                         nested("to-comments", "comments")
                                                 .subAggregation(topHits("comments")

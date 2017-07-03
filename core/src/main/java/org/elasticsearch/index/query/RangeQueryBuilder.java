@@ -112,7 +112,7 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         if (formatString != null) {
             format = Joda.forPattern(formatString);
         }
-        if (in.getVersion().onOrAfter(Version.V_5_2_0_UNRELEASED)) {
+        if (in.getVersion().onOrAfter(Version.V_5_2_0)) {
             String relationString = in.readOptionalString();
             if (relationString != null) {
                 relation = ShapeRelation.getRelationByName(relationString);
@@ -133,7 +133,7 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
             formatString = this.format.format();
         }
         out.writeOptionalString(formatString);
-        if (out.getVersion().onOrAfter(Version.V_5_2_0_UNRELEASED)) {
+        if (out.getVersion().onOrAfter(Version.V_5_2_0)) {
             String relationString = null;
             if (this.relation != null) {
                 relationString = this.relation.getRelationName();
@@ -343,9 +343,7 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         builder.endObject();
     }
 
-    public static RangeQueryBuilder fromXContent(QueryParseContext parseContext) throws IOException {
-        XContentParser parser = parseContext.parser();
-
+    public static RangeQueryBuilder fromXContent(XContentParser parser) throws IOException {
         String fieldName = null;
         Object from = null;
         Object to = null;
@@ -362,8 +360,6 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         while ((token = parser.nextToken()) != XContentParser.Token.END_OBJECT) {
             if (token == XContentParser.Token.FIELD_NAME) {
                 currentFieldName = parser.currentName();
-            } else if (parseContext.isDeprecatedSetting(currentFieldName)) {
-                // skip
             } else if (token == XContentParser.Token.START_OBJECT) {
                 throwParsingExceptionOnMultipleFields(NAME, parser.getTokenLocation(), fieldName, currentFieldName);
                 fieldName = currentFieldName;
@@ -495,9 +491,9 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
 
                 query = ((DateFieldMapper.DateFieldType) mapper).rangeQuery(from, to, includeLower, includeUpper,
                         timeZone, getForceDateParser(), context);
-            } else if (mapper instanceof RangeFieldMapper.RangeFieldType && mapper.typeName() == RangeFieldMapper.RangeType.DATE.name) {
+            } else if (mapper instanceof RangeFieldMapper.RangeFieldType) {
                 DateMathParser forcedDateParser = null;
-                if (this.format != null) {
+                if (mapper.typeName() == RangeFieldMapper.RangeType.DATE.name && this.format != null) {
                     forcedDateParser = new DateMathParser(this.format);
                 }
                 query = ((RangeFieldMapper.RangeFieldType) mapper).rangeQuery(from, to, includeLower, includeUpper,

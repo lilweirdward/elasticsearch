@@ -31,6 +31,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.unit.TimeValue;
 import org.elasticsearch.common.util.concurrent.AtomicArray;
 import org.elasticsearch.index.IndexNotFoundException;
+import org.elasticsearch.index.VersionType;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.test.ESTestCase;
 import org.elasticsearch.transport.TransportService;
@@ -66,7 +67,7 @@ public class TransportBulkActionIndicesThatCannotBeCreatedTests extends ESTestCa
         BulkRequest bulkRequest = new BulkRequest();
         bulkRequest.add(new IndexRequest("no"));
         bulkRequest.add(new IndexRequest("can't"));
-        bulkRequest.add(new DeleteRequest("do"));
+        bulkRequest.add(new DeleteRequest("do").version(0).versionType(VersionType.EXTERNAL));
         bulkRequest.add(new UpdateRequest("nothin", randomAlphaOfLength(5), randomAlphaOfLength(5)));
         indicesThatCannotBeCreatedTestCase(new HashSet<>(Arrays.asList("no", "can't", "do", "nothin")), bulkRequest, index -> {
             throw new IndexNotFoundException("Can't make it because I say so");
@@ -117,7 +118,7 @@ public class TransportBulkActionIndicesThatCannotBeCreatedTests extends ESTestCa
             @Override
             void createIndex(String index, TimeValue timeout, ActionListener<CreateIndexResponse> listener) {
                 // If we try to create an index just immediately assume it worked
-                listener.onResponse(new CreateIndexResponse(true, true) {});
+                listener.onResponse(new CreateIndexResponse(true, true, index) {});
             }
         };
         action.doExecute(null, bulkRequest, null);

@@ -71,7 +71,6 @@ import org.elasticsearch.index.fielddata.IndexFieldDataService;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.query.AbstractQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilder;
-import org.elasticsearch.index.query.QueryParseContext;
 import org.elasticsearch.index.query.QueryRewriteContext;
 import org.elasticsearch.index.query.QueryShardContext;
 import org.elasticsearch.index.query.support.QueryParsers;
@@ -120,12 +119,14 @@ import java.util.stream.Stream;
 
 import static java.util.Collections.emptyList;
 import static java.util.stream.Collectors.toList;
+import static org.elasticsearch.index.query.AbstractQueryBuilder.parseInnerQueryBuilder;
 import static org.elasticsearch.test.EqualsHashCodeTestUtils.checkEqualsAndHashCode;
 import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.either;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.instanceOf;
+
 
 public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>> extends ESTestCase {
 
@@ -147,10 +148,11 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
             DOUBLE_FIELD_NAME, BOOLEAN_FIELD_NAME, DATE_FIELD_NAME, DATE_RANGE_FIELD_NAME, GEO_POINT_FIELD_NAME, };
     private static final int NUMBER_OF_TESTQUERIES = 20;
 
+    protected static Version indexVersionCreated;
+
     private static ServiceHolder serviceHolder;
     private static int queryNameId = 0;
     private static Settings nodeSettings;
-    private static Settings indexSettings;
     private static Index index;
     private static String[] currentTypes;
     private static String[] randomTypes;
@@ -172,28 +174,25 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
 
     @BeforeClass
     public static void beforeClass() {
-        // we have to prefer CURRENT since with the range of versions we support it's rather unlikely to get the current actually.
-        Version indexVersionCreated = randomBoolean() ? Version.CURRENT
-                : VersionUtils.randomVersionBetween(random(), null, Version.CURRENT);
         nodeSettings = Settings.builder()
                 .put("node.name", AbstractQueryTestCase.class.toString())
                 .put(Environment.PATH_HOME_SETTING.getKey(), createTempDir())
-                .put(ScriptService.SCRIPT_AUTO_RELOAD_ENABLED_SETTING.getKey(), false)
                 .build();
-        indexSettings = Settings.builder()
-                .put(IndexMetaData.SETTING_VERSION_CREATED, indexVersionCreated)
-                .put("index.mapping.single_type", false).build();
 
         index = new Index(randomAlphaOfLengthBetween(1, 10), "_na_");
 
-        //create some random type with some default field, those types will stick around for all of the subclasses
-        currentTypes = new String[randomIntBetween(0, 5)];
-        for (int i = 0; i < currentTypes.length; i++) {
-            String type = randomAlphaOfLengthBetween(1, 10);
-            currentTypes[i] = type;
-        }
-        //set some random types to be queried as part the search request, before each test
+        // Set a single type in the index
+        currentTypes = new String[] { "doc" };
         randomTypes = getRandomTypes();
+    }
+
+    protected Settings indexSettings() {
+        // we have to prefer CURRENT since with the range of versions we support it's rather unlikely to get the current actually.
+        indexVersionCreated = randomBoolean() ? Version.CURRENT
+                : VersionUtils.randomVersionBetween(random(), null, Version.CURRENT);
+        return Settings.builder()
+            .put(IndexMetaData.SETTING_VERSION_CREATED, indexVersionCreated)
+            .build();
     }
 
     @AfterClass
@@ -205,7 +204,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
     @Before
     public void beforeTest() throws IOException {
         if (serviceHolder == null) {
-            serviceHolder = new ServiceHolder(nodeSettings, indexSettings, getPlugins(), this);
+            serviceHolder = new ServiceHolder(nodeSettings, indexSettings(), getPlugins(), this);
         }
         serviceHolder.clientInvocationHandler.delegate = this;
     }
@@ -547,8 +546,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
     }
 
     protected static QueryBuilder parseQuery(XContentParser parser) throws IOException {
-        QueryParseContext context = createParseContext(parser);
-        QueryBuilder parseInnerQueryBuilder = context.parseInnerQueryBuilder();
+        QueryBuilder parseInnerQueryBuilder = parseInnerQueryBuilder(parser);
         assertNull(parser.nextToken());
         return parseInnerQueryBuilder;
     }
@@ -707,13 +705,19 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
         }
     }
 
+    protected static QueryBuilder assertSerialization(QueryBuilder testQuery) throws IOException {
+        return assertSerialization(testQuery, Version.CURRENT);
+    }
+
     /**
      * Serialize the given query builder and asserts that both are equal
      */
-    protected static QueryBuilder assertSerialization(QueryBuilder testQuery) throws IOException {
+    protected static QueryBuilder assertSerialization(QueryBuilder testQuery, Version version) throws IOException {
         try (BytesStreamOutput output = new BytesStreamOutput()) {
+            output.setVersion(version);
             output.writeNamedWriteable(testQuery);
             try (StreamInput in = new NamedWriteableAwareStreamInput(output.bytes().streamInput(), serviceHolder.namedWriteableRegistry)) {
+                in.setVersion(version);
                 QueryBuilder deserializedQuery = in.readNamedWriteable(QueryBuilder.class);
                 assertEquals(testQuery, deserializedQuery);
                 assertEquals(testQuery.hashCode(), deserializedQuery.hashCode());
@@ -754,10 +758,6 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
      */
     protected static QueryShardContext createShardContext() {
         return serviceHolder.createShardContext();
-    }
-
-    private static QueryParseContext createParseContext(XContentParser parser) {
-        return new QueryParseContext(parser);
     }
 
     /**
@@ -848,10 +848,6 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
             }
         }
         return types;
-    }
-
-    protected static String getRandomType() {
-        return (currentTypes.length == 0) ? MetaData.ALL : randomFrom(currentTypes);
     }
 
     protected static Fuzziness randomFuzziness(String fieldName) {
@@ -1007,17 +1003,17 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
         ServiceHolder(Settings nodeSettings, Settings indexSettings,
                       Collection<Class<? extends Plugin>> plugins, AbstractQueryTestCase<?> testCase) throws IOException {
             Environment env = InternalSettingsPreparer.prepareEnvironment(nodeSettings, null);
-            PluginsService pluginsService = new PluginsService(nodeSettings, env.modulesFile(), env.pluginsFile(), plugins);
+            PluginsService pluginsService;
+            pluginsService = new PluginsService(nodeSettings, null, env.modulesFile(), env.pluginsFile(), plugins);
 
             client = (Client) Proxy.newProxyInstance(
                     Client.class.getClassLoader(),
                     new Class[]{Client.class},
                     clientInvocationHandler);
             ScriptModule scriptModule = createScriptModule(pluginsService.filterPlugins(ScriptPlugin.class));
-            List<Setting<?>> scriptSettings = scriptModule.getSettings();
-            scriptSettings.addAll(pluginsService.getPluginSettings());
-            scriptSettings.add(InternalSettingsPlugin.VERSION_CREATED);
-            SettingsModule settingsModule = new SettingsModule(nodeSettings, scriptSettings, pluginsService.getPluginSettingsFilter());
+            List<Setting<?>> additionalSettings = pluginsService.getPluginSettings();
+            additionalSettings.add(InternalSettingsPlugin.VERSION_CREATED);
+            SettingsModule settingsModule = new SettingsModule(nodeSettings, additionalSettings, pluginsService.getPluginSettingsFilter());
             searchModule = new SearchModule(nodeSettings, false, pluginsService.filterPlugins(SearchPlugin.class));
             IndicesModule indicesModule = new IndicesModule(pluginsService.filterPlugins(MapperPlugin.class));
             List<NamedWriteableRegistry.Entry> entries = new ArrayList<>();
@@ -1088,14 +1084,7 @@ public abstract class AbstractQueryTestCase<QB extends AbstractQueryBuilder<QB>>
             if (scriptPlugins == null || scriptPlugins.isEmpty()) {
                 return newTestScriptModule();
             }
-
-            Settings settings = Settings.builder()
-                    .put(Environment.PATH_HOME_SETTING.getKey(), createTempDir())
-                    // no file watching, so we don't need a ResourceWatcherService
-                    .put(ScriptService.SCRIPT_AUTO_RELOAD_ENABLED_SETTING.getKey(), false)
-                    .build();
-            Environment environment = new Environment(settings);
-            return ScriptModule.create(settings, environment, null, scriptPlugins);
+            return new ScriptModule(Settings.EMPTY, scriptPlugins);
         }
     }
 }

@@ -21,14 +21,18 @@ package org.elasticsearch.search.aggregations.pipeline.bucketmetrics.percentile;
 
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.search.DocValueFormat;
-import org.elasticsearch.search.aggregations.InternalAggregationTestCase;
+import org.elasticsearch.search.aggregations.Aggregation.CommonFields;
+import org.elasticsearch.search.aggregations.ParsedAggregation;
 import org.elasticsearch.search.aggregations.metrics.percentiles.Percentile;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
+import org.elasticsearch.test.InternalAggregationTestCase;
 
+import java.io.IOException;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static org.elasticsearch.search.aggregations.metrics.percentiles.InternalPercentilesTestCase.randomPercents;
 
@@ -66,6 +70,22 @@ public class InternalPercentilesBucketTests extends InternalAggregationTestCase<
         return InternalPercentilesBucket::new;
     }
 
+    @Override
+    protected final void assertFromXContent(InternalPercentilesBucket aggregation, ParsedAggregation parsedAggregation) {
+        assertTrue(parsedAggregation instanceof ParsedPercentilesBucket);
+        ParsedPercentilesBucket parsedPercentiles = (ParsedPercentilesBucket) parsedAggregation;
+
+        for (Percentile percentile : aggregation) {
+            Double percent = percentile.getPercent();
+            assertEquals(aggregation.percentile(percent), parsedPercentiles.percentile(percent), 0);
+            // we cannot ensure we get the same as_string output for Double.NaN values since they are rendered as
+            // null and we don't have a formatted string representation in the rest output
+            if (Double.isNaN(aggregation.percentile(percent)) == false) {
+                assertEquals(aggregation.percentileAsString(percent), parsedPercentiles.percentileAsString(percent));
+            }
+        }
+    }
+
     /**
      * check that we don't rely on the percent array order and that the iterator returns the values in the original order
      */
@@ -88,5 +108,20 @@ public class InternalPercentilesBucketTests extends InternalAggregationTestCase<
                 percentiles, DocValueFormat.RAW, Collections.emptyList(), Collections.emptyMap()));
         assertEquals("The number of provided percents and percentiles didn't match. percents: [0.1, 0.2, 0.3], percentiles: [0.1, 0.2]",
                 e.getMessage());
+    }
+
+    public void testParsedAggregationIteratorOrder() throws IOException {
+        final InternalPercentilesBucket aggregation = createTestInstance();
+        final Iterable<Percentile> parsedAggregation = parseAndAssert(aggregation, false, false);
+        Iterator<Percentile> it = aggregation.iterator();
+        Iterator<Percentile> parsedIt = parsedAggregation.iterator();
+        while (it.hasNext()) {
+            assertEquals(it.next(), parsedIt.next());
+        }
+    }
+
+    @Override
+    protected Predicate<String> excludePathsFromXContentInsertion() {
+        return path -> path.endsWith(CommonFields.VALUES.getPreferredName());
     }
 }

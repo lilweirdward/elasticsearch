@@ -84,10 +84,6 @@ setup() {
 }
 
 @test "[INIT.D] start" {
-    # Install scripts used to test script filters and search templates before
-    # starting Elasticsearch so we don't have to wait for elasticsearch to scan for
-    # them.
-    install_elasticsearch_test_scripts
     service elasticsearch start
     wait_for_elasticsearch_status
     assert_file_exist "/var/run/elasticsearch/elasticsearch.pid"
@@ -117,27 +113,6 @@ setup() {
 }
 
 @test "[INIT.D] status (stopped)" {
-    run service elasticsearch status
-    # precise returns 4, trusty 3
-    [ "$status" -eq 3 ] || [ "$status" -eq 4 ]
-}
-
-@test "[INIT.D] don't mkdir when it contains a comma" {
-    # Remove these just in case they exist beforehand
-    rm -rf /tmp/aoeu,/tmp/asdf
-    rm -rf /tmp/aoeu,
-    # set DATA_DIR to DATA_DIR=/tmp/aoeu,/tmp/asdf
-    sed -i 's/DATA_DIR=.*/DATA_DIR=\/tmp\/aoeu,\/tmp\/asdf/' /etc/init.d/elasticsearch
-    cat /etc/init.d/elasticsearch | grep "DATA_DIR"
-    run service elasticsearch start
-    if [ "$status" -ne 0 ]; then
-      cat /var/log/elasticsearch/*
-      fail
-    fi
-    wait_for_elasticsearch_status
-    assert_file_not_exist /tmp/aoeu,/tmp/asdf
-    assert_file_not_exist /tmp/aoeu,
-    service elasticsearch stop
     run service elasticsearch status
     # precise returns 4, trusty 3
     [ "$status" -eq 3 ] || [ "$status" -eq 4 ]

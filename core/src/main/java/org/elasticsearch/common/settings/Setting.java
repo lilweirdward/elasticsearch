@@ -19,6 +19,7 @@
 package org.elasticsearch.common.settings;
 
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.util.SetOnce;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.action.support.ToXContentToBytes;
@@ -84,11 +85,6 @@ public class Setting<T> extends ToXContentToBytes {
          * should be filtered in some api (mask password/credentials)
          */
         Filtered,
-
-        /**
-         * iff this setting is shared with more than one module ie. can be defined multiple times.
-         */
-        Shared,
 
         /**
          * iff this setting can be dynamically updateable
@@ -271,13 +267,6 @@ public class Setting<T> extends ToXContentToBytes {
     }
 
     /**
-     * Returns <code>true</code> if this setting is shared with more than one other module or plugin, otherwise <code>false</code>
-     */
-    public boolean isShared() {
-        return properties.contains(Property.Shared);
-    }
-
-    /**
      * Returns <code>true</code> iff this setting is a group setting. Group settings represent a set of settings rather than a single value.
      * The key, see {@link #getKey()}, in contrast to non-group settings is a prefix like <tt>cluster.store.</tt> that matches all settings
      * with this prefix.
@@ -354,14 +343,27 @@ public class Setting<T> extends ToXContentToBytes {
         return settings.get(getKey(), defaultValue.apply(settings));
     }
 
+    private static SetOnce<DeprecationLogger> deprecationLogger = new SetOnce<>();
+
+    // we have to initialize lazily otherwise a logger would be constructed before logging is initialized
+    private static synchronized DeprecationLogger getDeprecationLogger() {
+        if (deprecationLogger.get() == null) {
+            deprecationLogger.set(new DeprecationLogger(Loggers.getLogger(Settings.class)));
+        }
+        return deprecationLogger.get();
+    }
+
     /** Logs a deprecation warning if the setting is deprecated and used. */
-    protected void checkDeprecation(Settings settings) {
+    void checkDeprecation(Settings settings) {
         // They're using the setting, so we need to tell them to stop
         if (this.isDeprecated() && this.exists(settings)) {
             // It would be convenient to show its replacement key, but replacement is often not so simple
-            final DeprecationLogger deprecationLogger = new DeprecationLogger(Loggers.getLogger(getClass()));
-            deprecationLogger.deprecated("[{}] setting was deprecated in Elasticsearch and will be removed in a future release! " +
-                "See the breaking changes documentation for the next major version.", getKey());
+            final String key = getKey();
+            getDeprecationLogger().deprecatedAndMaybeLog(
+                    key,
+                    "[{}] setting was deprecated in Elasticsearch and will be removed in a future release! "
+                            + "See the breaking changes documentation for the next major version.",
+                    key);
         }
     }
 

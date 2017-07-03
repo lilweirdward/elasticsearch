@@ -104,7 +104,7 @@ public class RandomSearchRequestGenerator {
             searchRequest.scroll(randomPositiveTimeValue());
         }
         if (randomBoolean()) {
-            searchRequest.searchType(randomFrom(SearchType.values()));
+            searchRequest.searchType(randomFrom(SearchType.DFS_QUERY_THEN_FETCH, SearchType.QUERY_THEN_FETCH));
         }
         if (randomBoolean()) {
             searchRequest.source(randomSearchSourceBuilder.get());
@@ -142,6 +142,9 @@ public class RandomSearchRequestGenerator {
         }
         if (randomBoolean()) {
             builder.terminateAfter(randomIntBetween(1, 100000));
+        }
+        if (randomBoolean()) {
+            builder.trackTotalHits(randomBoolean());
         }
 
         switch(randomInt(2)) {

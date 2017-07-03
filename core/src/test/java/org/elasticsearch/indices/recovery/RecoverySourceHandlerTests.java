@@ -35,6 +35,7 @@ import org.apache.lucene.store.IOContext;
 import org.apache.lucene.util.IOUtils;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.Version;
+import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.metadata.IndexMetaData;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.common.bytes.BytesArray;
@@ -76,6 +77,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -180,7 +182,7 @@ public class RecoverySourceHandlerTests extends ESTestCase {
             operations.add(new Translog.Index(index, new Engine.IndexResult(1, i - initialNumberOfDocs, true)));
         }
         operations.add(null);
-        int totalOperations = handler.sendSnapshot(startingSeqNo, new Translog.Snapshot() {
+        RecoverySourceHandler.SendSnapshotResult result = handler.sendSnapshot(startingSeqNo, new Translog.Snapshot() {
             private int counter = 0;
 
             @Override
@@ -194,9 +196,9 @@ public class RecoverySourceHandlerTests extends ESTestCase {
             }
         });
         if (startingSeqNo == SequenceNumbersService.UNASSIGNED_SEQ_NO) {
-            assertThat(totalOperations, equalTo(initialNumberOfDocs + numberOfDocsWithValidSequenceNumbers));
+            assertThat(result.totalOperations, equalTo(initialNumberOfDocs + numberOfDocsWithValidSequenceNumbers));
         } else {
-            assertThat(totalOperations, equalTo(Math.toIntExact(numberOfDocsWithValidSequenceNumbers - startingSeqNo)));
+            assertThat(result.totalOperations, equalTo(Math.toIntExact(numberOfDocsWithValidSequenceNumbers - startingSeqNo)));
         }
     }
 
@@ -215,7 +217,7 @@ public class RecoverySourceHandlerTests extends ESTestCase {
         final BytesReference source = new BytesArray(new byte[] { 1 });
         final ParsedDocument doc =
             new ParsedDocument(versionField, seqID, id, type, null, Arrays.asList(document), source, XContentType.JSON, null);
-        return new Engine.Index(new Term("_uid", doc.uid()), doc);
+        return new Engine.Index(new Term("_uid", Uid.createUidAsBytes(doc.type(), doc.id())), doc);
     }
 
     public void testHandleCorruptedIndexOnSendSendFiles() throws Throwable {
@@ -375,7 +377,13 @@ public class RecoverySourceHandlerTests extends ESTestCase {
         final Translog.View translogView = mock(Translog.View.class);
         when(shard.acquireTranslogView()).thenReturn(translogView);
         when(shard.state()).thenReturn(IndexShardState.RELOCATED);
+        when(shard.acquireIndexCommit(anyBoolean())).thenReturn(mock(Engine.IndexCommitRef.class));
         final AtomicBoolean phase1Called = new AtomicBoolean();
+//        final Engine.IndexCommitRef indexCommitRef = mock(Engine.IndexCommitRef.class);
+//        when(shard.acquireIndexCommit(anyBoolean())).thenReturn(indexCommitRef);
+//        final IndexCommit indexCommit = mock(IndexCommit.class);
+//        when(indexCommitRef.getIndexCommit()).thenReturn(indexCommit);
+//        when(indexCommit.getUserData()).thenReturn(Collections.emptyMap());final AtomicBoolean phase1Called = new AtomicBoolean();
         final AtomicBoolean prepareTargetForTranslogCalled = new AtomicBoolean();
         final AtomicBoolean phase2Called = new AtomicBoolean();
         final RecoverySourceHandler handler = new RecoverySourceHandler(
@@ -393,7 +401,7 @@ public class RecoverySourceHandlerTests extends ESTestCase {
             }
 
             @Override
-            public void phase1(final IndexCommit snapshot, final Translog.View translogView) {
+            public void phase1(final IndexCommit snapshot, final Translog.View translogView, final long startSeqNo) {
                 phase1Called.set(true);
             }
 
@@ -403,8 +411,9 @@ public class RecoverySourceHandlerTests extends ESTestCase {
             }
 
             @Override
-            void phase2(long startingSeqNo, Translog.Snapshot snapshot) throws IOException {
+            long phase2(long startingSeqNo, Translog.Snapshot snapshot) throws IOException {
                 phase2Called.set(true);
+                return SequenceNumbersService.UNASSIGNED_SEQ_NO;
             }
 
         };
@@ -446,8 +455,20 @@ public class RecoverySourceHandlerTests extends ESTestCase {
             relocated.set(true);
             assertTrue(recoveriesDelayed.get());
             return null;
-        }).when(shard).relocated(any(String.class));
+        }).when(shard).relocated(any(String.class), any(Consumer.class));
+        when(shard.acquireIndexCommit(anyBoolean())).thenReturn(mock(Engine.IndexCommitRef.class));
+        doAnswer(invocationOnMock -> {
+            @SuppressWarnings("unchecked")
+            final ActionListener<Releasable> listener = (ActionListener<Releasable>)invocationOnMock.getArguments()[0];
+            listener.onResponse(() -> {});
+            return null;
+        }).when(shard).acquirePrimaryOperationPermit(any(ActionListener.class), any(String.class));
 
+//        final Engine.IndexCommitRef indexCommitRef = mock(Engine.IndexCommitRef.class);
+//        when(shard.acquireIndexCommit(anyBoolean())).thenReturn(indexCommitRef);
+//        final IndexCommit indexCommit = mock(IndexCommit.class);
+//        when(indexCommitRef.getIndexCommit()).thenReturn(indexCommit);
+//        when(indexCommit.getUserData()).thenReturn(Collections.emptyMap());
         final Supplier<Long> currentClusterStateVersionSupplier = () -> {
             assertFalse(ensureClusterStateVersionCalled.get());
             assertTrue(recoveriesDelayed.get());
@@ -484,7 +505,7 @@ public class RecoverySourceHandlerTests extends ESTestCase {
             }
 
             @Override
-            public void phase1(final IndexCommit snapshot, final Translog.View translogView) {
+            public void phase1(final IndexCommit snapshot, final Translog.View translogView, final long startSeqNo) {
                 phase1Called.set(true);
             }
 
@@ -494,8 +515,9 @@ public class RecoverySourceHandlerTests extends ESTestCase {
             }
 
             @Override
-            void phase2(long startingSeqNo, Translog.Snapshot snapshot) throws IOException {
+            long phase2(long startingSeqNo, Translog.Snapshot snapshot) throws IOException {
                 phase2Called.set(true);
+                return SequenceNumbersService.UNASSIGNED_SEQ_NO;
             }
 
         };

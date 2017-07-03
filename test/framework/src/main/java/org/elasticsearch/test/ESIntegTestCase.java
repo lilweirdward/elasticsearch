@@ -570,7 +570,8 @@ public abstract class ESIntegTestCase extends ESTestCase {
                                 final ZenDiscovery zenDiscovery = (ZenDiscovery) discovery;
                                 assertBusy(() -> {
                                     final ClusterState[] states = zenDiscovery.pendingClusterStates();
-                                    assertThat(zenDiscovery.localNode().getName() + " still having pending states:\n" +
+                                    assertThat(zenDiscovery.clusterState().nodes().getLocalNode().getName() +
+                                            " still having pending states:\n" +
                                             Stream.of(states).map(ClusterState::toString).collect(Collectors.joining("\n")),
                                         states, emptyArray());
                                 });
@@ -1481,7 +1482,8 @@ public abstract class ESIntegTestCase extends ESTestCase {
 
     /** Sets or unsets the cluster read_only mode **/
     public static void setClusterReadOnly(boolean value) {
-        Settings settings = Settings.builder().put(MetaData.SETTING_READ_ONLY_SETTING.getKey(), value).build();
+        Settings settings = value ? Settings.builder().put(MetaData.SETTING_READ_ONLY_SETTING.getKey(), value).build() :
+            Settings.builder().putNull(MetaData.SETTING_READ_ONLY_SETTING.getKey()).build()  ;
         assertAcked(client().admin().cluster().prepareUpdateSettings().setTransientSettings(settings).get());
     }
 
@@ -1719,9 +1721,7 @@ public abstract class ESIntegTestCase extends ESTestCase {
             // from failing on nodes without enough disk space
             .put(DiskThresholdSettings.CLUSTER_ROUTING_ALLOCATION_LOW_DISK_WATERMARK_SETTING.getKey(), "1b")
             .put(DiskThresholdSettings.CLUSTER_ROUTING_ALLOCATION_HIGH_DISK_WATERMARK_SETTING.getKey(), "1b")
-            .put(ScriptService.SCRIPT_MAX_COMPILATIONS_PER_MINUTE.getKey(), 1000)
-            .put("script.stored", "true")
-            .put("script.inline", "true")
+            .put(ScriptService.SCRIPT_MAX_COMPILATIONS_PER_MINUTE.getKey(), 2048)
             // by default we never cache below 10k docs in a segment,
             // bypass this limit so that caching gets some testing in
             // integration tests that usually create few documents
@@ -1729,6 +1729,10 @@ public abstract class ESIntegTestCase extends ESTestCase {
             // wait short time for other active shards before actually deleting, default 30s not needed in tests
             .put(IndicesStore.INDICES_STORE_DELETE_SHARD_TIMEOUT.getKey(), new TimeValue(1, TimeUnit.SECONDS));
         return builder.build();
+    }
+
+    protected Path nodeConfigPath(int nodeOrdinal) {
+        return null;
     }
 
     /**
@@ -1837,6 +1841,11 @@ public abstract class ESIntegTestCase extends ESTestCase {
                     .put(NetworkModule.HTTP_ENABLED.getKey(), false)
                     .put(networkSettings.build()).
                         put(ESIntegTestCase.this.nodeSettings(nodeOrdinal)).build();
+            }
+
+            @Override
+            public Path nodeConfigPath(int nodeOrdinal) {
+                return ESIntegTestCase.this.nodeConfigPath(nodeOrdinal);
             }
 
             @Override
@@ -2153,10 +2162,6 @@ public abstract class ESIntegTestCase extends ESTestCase {
             .put(settings)
             .put(Environment.PATH_DATA_SETTING.getKey(), dataDir.toAbsolutePath());
 
-        Path configDir = indexDir.resolve("config");
-        if (Files.exists(configDir)) {
-            builder.put(Environment.PATH_CONF_SETTING.getKey(), configDir.toAbsolutePath());
-        }
         return builder.build();
     }
 

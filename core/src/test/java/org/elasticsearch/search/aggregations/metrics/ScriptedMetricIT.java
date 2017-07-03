@@ -25,7 +25,6 @@ import org.elasticsearch.common.bytes.BytesArray;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.common.xcontent.support.XContentMapValues;
-import org.elasticsearch.env.Environment;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.script.MockScriptPlugin;
 import org.elasticsearch.script.Script;
@@ -40,6 +39,7 @@ import org.elasticsearch.search.aggregations.metrics.scripted.ScriptedMetric;
 import org.elasticsearch.test.ESIntegTestCase;
 import org.elasticsearch.test.ESIntegTestCase.ClusterScope;
 import org.elasticsearch.test.ESIntegTestCase.Scope;
+import org.junit.Before;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -253,14 +253,16 @@ public class ScriptedMetricIT extends ESIntegTestCase {
         ensureSearchable();
     }
 
-    @Override
-    protected Settings nodeSettings(int nodeOrdinal) {
-        Path config = createTempDir().resolve("config");
-        Path scripts = config.resolve("scripts");
+    private Path config;
+
+    @Before
+    public void setUp() throws Exception {
+        super.setUp();
+        config = createTempDir().resolve("config");
+        final Path scripts = config.resolve("scripts");
 
         try {
             Files.createDirectories(scripts);
-
             // When using the MockScriptPlugin we can map File scripts to inline scripts:
             // the name of the file script is used in test method while the source of the file script
             // must match a predefined script from CustomScriptPlugin.pluginScripts() method
@@ -271,11 +273,11 @@ public class ScriptedMetricIT extends ESIntegTestCase {
         } catch (IOException e) {
             throw new RuntimeException("failed to create scripts");
         }
+    }
 
-        return Settings.builder()
-                .put(super.nodeSettings(nodeOrdinal))
-                .put(Environment.PATH_CONF_SETTING.getKey(), config)
-                .build();
+    @Override
+    protected Path nodeConfigPath(int nodeOrdinal) {
+        return config;
     }
 
     public void testMap() {
@@ -796,44 +798,6 @@ public class ScriptedMetricIT extends ESIntegTestCase {
                                     new Script(ScriptType.STORED, CustomScriptPlugin.NAME, "combineScript_stored", Collections.emptyMap()))
                                 .reduceScript(
                                     new Script(ScriptType.STORED, CustomScriptPlugin.NAME, "reduceScript_stored", Collections.emptyMap())))
-                .get();
-        assertSearchResponse(response);
-        assertThat(response.getHits().getTotalHits(), equalTo(numDocs));
-
-        Aggregation aggregation = response.getAggregations().get("scripted");
-        assertThat(aggregation, notNullValue());
-        assertThat(aggregation, instanceOf(ScriptedMetric.class));
-        ScriptedMetric scriptedMetricAggregation = (ScriptedMetric) aggregation;
-        assertThat(scriptedMetricAggregation.getName(), equalTo("scripted"));
-        assertThat(scriptedMetricAggregation.aggregation(), notNullValue());
-        assertThat(scriptedMetricAggregation.aggregation(), instanceOf(ArrayList.class));
-        List<?> aggregationList = (List<?>) scriptedMetricAggregation.aggregation();
-        assertThat(aggregationList.size(), equalTo(1));
-        Object object = aggregationList.get(0);
-        assertThat(object, notNullValue());
-        assertThat(object, instanceOf(Number.class));
-        assertThat(((Number) object).longValue(), equalTo(numDocs * 3));
-    }
-
-    public void testInitMapCombineReduceWithParamsFile() {
-        Map<String, Object> varsMap = new HashMap<>();
-        varsMap.put("multiplier", 1);
-        Map<String, Object> params = new HashMap<>();
-        params.put("_agg", new ArrayList<>());
-        params.put("vars", varsMap);
-
-        SearchResponse response = client()
-                .prepareSearch("idx")
-                .setQuery(matchAllQuery())
-                .addAggregation(
-                        scriptedMetric("scripted")
-                                .params(params)
-                                .initScript(new Script(ScriptType.FILE, CustomScriptPlugin.NAME, "init_script", Collections.emptyMap()))
-                                .mapScript(new Script(ScriptType.FILE, CustomScriptPlugin.NAME, "map_script", Collections.emptyMap()))
-                                .combineScript(
-                                    new Script(ScriptType.FILE, CustomScriptPlugin.NAME, "combine_script", Collections.emptyMap()))
-                                .reduceScript(
-                                    new Script(ScriptType.FILE, CustomScriptPlugin.NAME, "reduce_script", Collections.emptyMap())))
                 .get();
         assertSearchResponse(response);
         assertThat(response.getHits().getTotalHits(), equalTo(numDocs));
